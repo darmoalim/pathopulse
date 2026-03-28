@@ -1,5 +1,6 @@
 /* Tailwind v4 base */
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 /* Custom dark variant */
 @custom-variant dark (&:is(.dark *));

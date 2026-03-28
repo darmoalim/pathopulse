@@ -24,8 +24,18 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
+  const url = new URL(e.request.url);
+
+  // Never intercept Next.js internals or dev HMR endpoints.
+  if (url.pathname.startsWith("/_next/")) return;
+
   // Pass through SSE feed requests untouched
   if (e.request.url.includes("/api/v2/feed")) return;
+
+  // Keep non-GET requests untouched, except our explicit offline POST behavior below.
+  if (e.request.method !== "GET" && !(e.request.method === "POST" && e.request.url.includes("/api/v2/outbreaks/"))) {
+    return;
+  }
 
   // Intercept offline POST submissions
   if (e.request.method === "POST" && e.request.url.includes("/api/v2/outbreaks/")) {
@@ -49,7 +59,12 @@ self.addEventListener("fetch", (e) => {
       const fetchPromise = fetch(e.request)
         .then((networkResp) => {
           // don't cache API or external fonts here simply to keep it lightweight, unless it's a GET
-          if (e.request.method === "GET" && e.request.url.startsWith("http")) {
+          if (
+            e.request.method === "GET" &&
+            e.request.url.startsWith("http") &&
+            url.origin === self.location.origin &&
+            !url.pathname.startsWith("/api/")
+          ) {
             const clone = networkResp.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
           }

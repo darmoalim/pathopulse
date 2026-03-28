@@ -1,5 +1,4 @@
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap, Circle } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
 import React, { useEffect } from "react";
 import L from "leaflet";
 import { forecastThreatRadius } from "@/lib/seir";
