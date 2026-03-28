@@ -1,50 +1,58 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Lock, Eye, EyeOff, X, ShieldCheck, Activity } from "lucide-react";
+import { Lock, Eye, EyeOff, X, ShieldCheck, IdCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  onSuccess: (role: "operator") => void;
+  onSuccess: (role: "operator", name: string) => void;
   onClose: () => void;
 }
 
 export default function LoginModal({ onSuccess, onClose }: Props) {
+  const [workerId, setWorkerId] = useState("");
   const [pin, setPin] = useState("");
   const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Demo hint state
+  const [showHint, setShowHint] = useState(false);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
+      const body: Record<string, string> = { pin };
+      if (workerId.trim()) body.worker_id = workerId.trim().toUpperCase();
+
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (res.ok && data.role === "operator") {
-        // Store session in localStorage
+      if (res.ok && data.token) {
+        // Store session token (replaces plain role string)
+        localStorage.setItem("pp_token", data.token);
         localStorage.setItem("pp_role", "operator");
+        localStorage.setItem("pp_name", data.name || "Operator");
         localStorage.setItem("pp_session_ts", Date.now().toString());
-        onSuccess("operator");
+        onSuccess("operator", data.name || "Operator");
       } else {
-        setError(data.error || "Invalid operator code. Please try again.");
+        setError(data.error || "Invalid credentials. Please try again.");
       }
     } catch {
       setError("Network error. Check your connection.");
     } finally {
       setLoading(false);
     }
-  }, [pin, onSuccess]);
+  }, [pin, workerId, onSuccess]);
 
   return (
-    /* Backdrop */
     <div
       className="fixed inset-0 z-[900] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -62,10 +70,7 @@ export default function LoginModal({ onSuccess, onClose }: Props) {
               <p className="text-xs text-muted-foreground mt-0.5">J&K Directorate of Public Health</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md hover:bg-muted transition-colors text-muted-foreground"
-          >
+          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors text-muted-foreground">
             <X className="size-4" />
           </button>
         </div>
@@ -75,14 +80,34 @@ export default function LoginModal({ onSuccess, onClose }: Props) {
           <div className="mb-5 p-3 rounded-lg bg-muted/50 border border-border flex items-start gap-2.5">
             <ShieldCheck className="size-3.5 text-muted-foreground mt-0.5 shrink-0" />
             <p className="text-xs text-muted-foreground leading-relaxed">
-              This section is restricted to authorised field officers and PHC operators. Enter your operator access code to submit clinical reports.
+              Authorised field officers and PHC operators only. Enter your Worker ID and access code.
+              Leave Worker ID blank to use the admin PIN.
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Worker ID Field */}
             <div>
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
-                Operator Access Code
+                Worker ID <span className="text-muted-foreground/60 font-normal">(optional for admin)</span>
+              </label>
+              <div className="relative">
+                <IdCard className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  type="text"
+                  value={workerId}
+                  onChange={e => { setWorkerId(e.target.value); setError(""); }}
+                  placeholder="e.g. KSH-ASH-00421"
+                  className="pl-9 font-mono uppercase"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* PIN Field */}
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
+                Access Code
               </label>
               <div className="relative">
                 <Input
@@ -91,7 +116,6 @@ export default function LoginModal({ onSuccess, onClose }: Props) {
                   onChange={e => { setPin(e.target.value); setError(""); }}
                   placeholder="Enter access code..."
                   className="pr-10 font-mono"
-                  autoFocus
                   required
                 />
                 <button
@@ -102,16 +126,10 @@ export default function LoginModal({ onSuccess, onClose }: Props) {
                   {showPin ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                 </button>
               </div>
-              {error && (
-                <p className="mt-1.5 text-xs text-destructive font-medium">{error}</p>
-              )}
+              {error && <p className="mt-1.5 text-xs text-destructive font-medium">{error}</p>}
             </div>
 
-            <Button
-              type="submit"
-              disabled={loading || !pin}
-              className="w-full text-xs font-semibold uppercase tracking-wider"
-            >
+            <Button type="submit" disabled={loading || !pin} className="w-full text-xs font-semibold uppercase tracking-wider">
               {loading ? (
                 <><div className="w-3.5 h-3.5 border-2 border-background/30 border-t-background rounded-full animate-spin" /> Authenticating...</>
               ) : (
@@ -119,11 +137,24 @@ export default function LoginModal({ onSuccess, onClose }: Props) {
               )}
             </Button>
           </form>
+
+          {/* Demo hint */}
+          <div className="mt-3 text-center">
+            <button onClick={() => setShowHint(v => !v)} className="text-[10px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors">
+              {showHint ? "Hide" : "Demo credentials"}
+            </button>
+            {showHint && (
+              <div className="mt-2 p-2.5 rounded-md bg-muted/50 border border-dashed border-border text-left space-y-1">
+                <p className="text-[10px] text-muted-foreground font-mono">Admin PIN: <span className="text-foreground font-bold">PP-ADMIN-2025</span></p>
+                <p className="text-[10px] text-muted-foreground font-mono">Worker: <span className="text-foreground font-bold">KSH-ASH-00421</span> / <span className="text-foreground font-bold">pathopulse2025</span></p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Modal Footer */}
         <div className="px-5 pb-4 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          <Activity className="size-3" />
+          <ShieldCheck className="size-3" />
           <span>PathoPulse Secure Operations · J&K Genomic Surveillance</span>
         </div>
       </div>

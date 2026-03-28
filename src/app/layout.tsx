@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PathoPulse Command Center",
   description: "Next-Gen Genomic Surveillance Platform for J&K Region.",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({
@@ -28,7 +29,23 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js').then(
+                    function(registration) { console.log('PWA ServiceWorker registered with scope: ', registration.scope); },
+                    function(err) { console.log('PWA ServiceWorker registration failed: ', err); }
+                  );
+                });
+              }
+            `,
+          }}
+        />
+      </body>
     </html>
   );
 }

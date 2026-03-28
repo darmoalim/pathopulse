@@ -2,6 +2,7 @@ import { MapContainer, TileLayer, CircleMarker, Popup, useMap, Circle } from "re
 import "leaflet/dist/leaflet.css";
 import React, { useEffect } from "react";
 import L from "leaflet";
+import { forecastThreatRadius } from "@/lib/seir";
 
 interface Region {
   id: number;
@@ -13,6 +14,8 @@ interface Region {
   variant: string;
   priority_score: number;
   symptom_reports: number;
+  population?: number;
+  active_cases?: number;
   zoomLevel?: number;
   locations_json?: string | null;
 }
@@ -126,14 +129,19 @@ export default function MapComponent({ regions, activeRegion, onSelect }: Props)
           const isCritical = r.priority_score >= 75;
           const baseRadius = Math.max(7, Math.min(22, 7 + r.priority_score * 0.17));
 
+          // Calculate Dynamic SEIR Threat Spread Radar
+          const threatRadiusKm = isCritical && r.population && r.active_cases 
+            ? forecastThreatRadius(r.disease, r.active_cases, r.population, 7) 
+            : 0;
+
           return (
             <React.Fragment key={r.id}>
-              {/* ── Threat Radiuses for Critical Outbreaks ── */}
-              {isCritical && (
+              {/* ── SEIR Projected Threat Radiuses (7-Day Forecast) ── */}
+              {isCritical && threatRadiusKm > 0 && (
                 <>
-                  <Circle center={[Number(r.latitude), Number(r.longitude)]} radius={1000} pathOptions={{ color: "transparent", fillColor: "#ef4444", fillOpacity: 0.12, interactive: false }} />
-                  <Circle center={[Number(r.latitude), Number(r.longitude)]} radius={3000} pathOptions={{ color: "transparent", fillColor: "#ef4444", fillOpacity: 0.08, interactive: false }} />
-                  <Circle center={[Number(r.latitude), Number(r.longitude)]} radius={6000} pathOptions={{ color: "#ef4444", weight: 1, dashArray: "4 6", fillColor: "#ef4444", fillOpacity: 0.04, interactive: false }} />
+                  <Circle center={[Number(r.latitude), Number(r.longitude)]} radius={threatRadiusKm * 1000 * 0.2} pathOptions={{ color: "transparent", fillColor: "#ef4444", fillOpacity: 0.25, interactive: false }} />
+                  <Circle center={[Number(r.latitude), Number(r.longitude)]} radius={threatRadiusKm * 1000 * 0.5} pathOptions={{ color: "transparent", fillColor: "#ef4444", fillOpacity: 0.1, interactive: false }} />
+                  <Circle center={[Number(r.latitude), Number(r.longitude)]} radius={threatRadiusKm * 1000} pathOptions={{ color: "#ef4444", weight: 1.5, dashArray: "5 5", fillColor: "#ef4444", fillOpacity: 0.03, interactive: false }} />
                 </>
               )}
 

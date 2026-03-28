@@ -150,6 +150,7 @@ export default function CommandCenter() {
   const [submitOk, setSubmitOk] = useState(false);
   // Auth
   const [role, setRole] = useState<Role>("public");
+  const [operatorName, setOperatorName] = useState<string>("Operator");
   const [showLogin, setShowLogin] = useState(false);
   const isOperator = role === "operator";
 
@@ -157,13 +158,22 @@ export default function CommandCenter() {
   useEffect(() => {
     const r = localStorage.getItem("pp_role");
     const ts = localStorage.getItem("pp_session_ts");
+    const name = localStorage.getItem("pp_name");
     if (r === "operator" && ts && Date.now() - parseInt(ts) < 8 * 3600 * 1000) {
       setRole("operator");
+      if (name) setOperatorName(name);
     }
   }, []);
 
-  const logout = () => { localStorage.removeItem("pp_role"); localStorage.removeItem("pp_session_ts"); setRole("public"); };
-  const onLoginSuccess = (r: "operator") => { setRole(r); setShowLogin(false); };
+  const logout = () => {
+    localStorage.removeItem("pp_role");
+    localStorage.removeItem("pp_session_ts");
+    localStorage.removeItem("pp_token");
+    localStorage.removeItem("pp_name");
+    setRole("public");
+    setOperatorName("Operator");
+  };
+  const onLoginSuccess = (r: "operator", name: string) => { setRole(r); setOperatorName(name); setShowLogin(false); };
 
   // ── Fetch districts ────────────────────────────────────────────
   const fetchDistricts = useCallback(async () => {
@@ -207,11 +217,21 @@ export default function CommandCenter() {
     if (!selectedOutbreak || !form.new_cases || !isOperator) return;
     setSubmitting(true);
     try {
+      const numCases = parseInt(form.new_cases);
+      
+      // Simulate real-world patient ID scanning (for hackathon demo)
+      const patient_hashes = Array.from({ length: numCases }, () => crypto.randomUUID());
+
+      const token = localStorage.getItem("pp_token") || "";
       const res = await fetch(`/api/v2/outbreaks/${selectedOutbreak.id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-operator-pin": "PP-ADMIN-2025" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
-          new_cases: parseInt(form.new_cases),
+          new_cases: numCases,
+          patient_hashes,
           deaths: parseInt(form.deaths || "0"),
           hospitalized: parseInt(form.hospitalized || "0"),
           recovered: parseInt(form.recovered || "0"),
@@ -250,22 +270,25 @@ export default function CommandCenter() {
   // Flatten regions for map
   const mapRegions = useMemo(() => districts.map(d => ({
     id: d.id, region: d.name, country: d.division, latitude: d.latitude, longitude: d.longitude,
-    sequenced: !d.has_blindspot, disease: (d.diseases || []).join(", "),
+    sequenced: !d.has_blindspot, disease: (d.diseases || [])[0] || "",
     variant: "", priority_score: d.max_score, symptom_reports: d.total_cases,
+    population: d.population || 500000, active_cases: d.total_cases * 0.8 // Approximate active globally
   })), [districts]);
 
   const activeMapRegion = selectedZone ? {
     id: selectedZone.id, region: selectedZone.name, country: selectedZone.type,
     latitude: selectedZone.latitude, longitude: selectedZone.longitude,
     locations_json: selectedZone.locations_json,
-    sequenced: true, disease: "", variant: "", priority_score: 50, symptom_reports: 0,
+    sequenced: true, disease: selectedOutbreak?.disease || "", variant: "", priority_score: 50, symptom_reports: 0,
+    population: selectedZone.population || 5000, active_cases: selectedOutbreak?.active_cases || 0,
     zoomLevel: 13
   } : selectedDistrict ? {
     id: selectedDistrict.id, region: selectedDistrict.name, country: selectedDistrict.division,
     latitude: selectedDistrict.latitude, longitude: selectedDistrict.longitude,
     locations_json: null,
-    sequenced: !selectedDistrict.has_blindspot, disease: "",
+    sequenced: !selectedDistrict.has_blindspot, disease: selectedDistrict.diseases[0] || "",
     variant: "", priority_score: selectedDistrict.max_score, symptom_reports: selectedDistrict.total_cases,
+    population: selectedDistrict.population || 500000, active_cases: selectedDistrict.total_cases * 0.8,
     zoomLevel: 10
   } : null;
 
@@ -291,7 +314,7 @@ export default function CommandCenter() {
           {warnCount > 0 && <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block" />{warnCount} Warning</div>}
           {isOperator ? (
             <div className="flex items-center gap-2">
-              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold"><ShieldCheck className="size-3" />Operator</div>
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold"><ShieldCheck className="size-3" />{operatorName}</div>
               <Button variant="ghost" size="sm" className="text-xs gap-1.5 text-muted-foreground" onClick={logout}><LogOut className="size-3.5" /><span className="hidden sm:inline">Sign out</span></Button>
             </div>
           ) : (
@@ -441,21 +464,52 @@ export default function CommandCenter() {
   );
 }
 
-// ── Live Intelligence Ticker ──────────────────────────────────────
+// ── Live Intelligence Ticker (Real-Time SSE) ────────────────────────
 function LiveTicker({ districts }: { districts: District[] }) {
-  const messages = useMemo(() => {
-    if (!districts || districts.length === 0) return [];
-    const active = districts.filter(d => d.outbreak_count > 0);
-    if (active.length === 0) return ["Scanning J&K nodal network... No active critical alerts."];
-    // Generate simulated feed items
-    return active.slice(0, 15).map((d, i) => {
-      const type = getTier(d.max_score);
-      const disease = d.diseases[0] || "Unknown Pathogen";
-      const times = ["Just now", "2m ago", "5m ago", "12m ago", "18m ago", "34m ago"];
-      const time = times[i % times.length];
-      return { msg: `${d.name}: ${d.total_cases} active ${disease} cases under surveillance.`, type, time };
-    });
-  }, [districts]);
+  const [messages, setMessages] = useState<any[]>([]);
+
+  useEffect(() => {
+    // Connect to Server-Sent Events feed
+    const es = new EventSource("/api/v2/feed");
+
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.message) {
+        setMessages(prev => {
+          // Prepend new messages, keep last 20
+          const updated = [data, ...prev.filter(m => m.message !== data.message)];
+          return updated.slice(0, 20);
+        });
+      }
+    };
+
+    return () => es.close();
+  }, []);
+
+  // If SSE has no real logs yet (fresh DB), fallback to mapping critical districts as scrolling events
+  const displayMessages = messages.length > 0 ? messages :
+    districts
+      .filter(d => d.outbreak_count > 0)
+      .slice(0, 10).map((d, i) => {
+        const type = d.max_score >= 75 ? "critical" : d.max_score >= 50 ? "moderate" : "mild";
+        const disease = (d.diseases || [])[0] || "Unknown Pathogen";
+        const times = ["Just now", "2m ago", "12m ago", "1h ago"];
+        return { message: `${d.name}: ${d.total_cases} ${disease} cases under active tracking.`, severity: type, timeStr: times[i % times.length] };
+      });
+
+  if (displayMessages.length === 0) {
+    return (
+      <div className="absolute bottom-0 left-0 right-0 h-8 flex items-center z-[500] overflow-hidden text-xs bg-[#0b0f19]">
+        <div className="flex items-center px-4 h-full bg-red-600 text-white font-bold tracking-widest uppercase shrink-0 z-20 shadow-[8px_0_16px_rgba(0,0,0,0.8)]">
+          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse mr-2" />
+          Live Feed
+        </div>
+        <div className="flex-1 px-4 text-slate-500 font-mono tracking-widest uppercase text-[10px] h-full flex items-center">
+          Scanning J&K nodal network... No critical alerts...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="absolute bottom-0 left-0 right-0 h-8 flex items-center z-[500] overflow-hidden text-xs bg-[#0b0f19]">
@@ -468,25 +522,39 @@ function LiveTicker({ districts }: { districts: District[] }) {
         <div className="absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-[#0b0f19] to-transparent z-20 pointer-events-none" />
         
         <div className="flex animate-marquee-loop hover:[animation-play-state:paused] w-max items-center pl-8">
-          {messages.map((m: any, i) => (
-            <div key={`a-${i}`} className="flex items-center whitespace-nowrap mr-14 text-slate-200">
-              <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500 mr-2.5">[{m.time || "Scanning"}]</span>
-              <span className={cn("inline-block w-1.5 h-1.5 rounded-full mr-2.5 shadow-[0_0_6px_rgba(0,0,0,0.5)]",
-                m.type === "critical" ? "bg-red-500" : m.type === "warning" ? "bg-orange-500" : "bg-emerald-500"
-              )} />
-              <span className="font-medium tracking-wide">{m.msg || m}</span>
-            </div>
-          ))}
+          {displayMessages.map((m: any, i) => {
+            let timeStr = m.timeStr;
+            if (!timeStr && m.timestamp) {
+              const diffMsg = Math.floor((Date.now() - new Date(m.timestamp).getTime()) / 60000);
+              timeStr = diffMsg <= 1 ? "Just now" : `${diffMsg}m ago`;
+            }
+            return (
+              <div key={`a-${i}`} className="flex items-center whitespace-nowrap mr-14 text-slate-200">
+                <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500 mr-2.5">[{timeStr || "Scanning"}]</span>
+                <span className={cn("inline-block w-1.5 h-1.5 rounded-full mr-2.5 shadow-[0_0_6px_rgba(0,0,0,0.5)]",
+                  m.severity === "critical" || m.severity === "severe" ? "bg-red-500" : m.severity === "moderate" || m.severity === "warning" ? "bg-orange-500" : "bg-emerald-500"
+                )} />
+                <span className="font-medium tracking-wide">{m.message}</span>
+              </div>
+            );
+          })}
           {/* Duplicate set for perfectly seamless infinity loop */}
-          {messages.map((m: any, i) => (
-            <div key={`b-${i}`} className="flex items-center whitespace-nowrap mr-14 text-slate-200">
-              <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500 mr-2.5">[{m.time || "Scanning"}]</span>
-              <span className={cn("inline-block w-1.5 h-1.5 rounded-full mr-2.5 shadow-[0_0_6px_rgba(0,0,0,0.5)]",
-                m.type === "critical" ? "bg-red-500" : m.type === "warning" ? "bg-orange-500" : "bg-emerald-500"
-              )} />
-              <span className="font-medium tracking-wide">{m.msg || m}</span>
-            </div>
-          ))}
+          {displayMessages.map((m: any, i) => {
+            let timeStr = m.timeStr;
+            if (!timeStr && m.timestamp) {
+              const diffMsg = Math.floor((Date.now() - new Date(m.timestamp).getTime()) / 60000);
+              timeStr = diffMsg <= 1 ? "Just now" : `${diffMsg}m ago`;
+            }
+            return (
+              <div key={`b-${i}`} className="flex items-center whitespace-nowrap mr-14 text-slate-200">
+                <span className="text-[10px] uppercase font-mono tracking-widest text-slate-500 mr-2.5">[{timeStr || "Scanning"}]</span>
+                <span className={cn("inline-block w-1.5 h-1.5 rounded-full mr-2.5 shadow-[0_0_6px_rgba(0,0,0,0.5)]",
+                  m.severity === "critical" || m.severity === "severe" ? "bg-red-500" : m.severity === "moderate" || m.severity === "warning" ? "bg-orange-500" : "bg-emerald-500"
+                )} />
+                <span className="font-medium tracking-wide">{m.message}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
